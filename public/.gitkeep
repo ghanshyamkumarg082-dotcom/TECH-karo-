@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAHUL PRO LIVE MIC</title>
+<style>
+:root{color-scheme:dark;--cyan:#00e5ff;--pink:#ff2bd6}
+*{box-sizing:border-box}body{margin:0;padding:18px;background:radial-gradient(circle at 15% 0%,#17224b,#080b16 55%,#03040a);color:#f4f7ff;font-family:system-ui,Arial}
+.wrap{max-width:720px;margin:auto}.brand{text-align:center;margin:12px 0 22px}.brand h1{font-size:clamp(26px,7vw,40px);margin:0;text-shadow:0 0 12px var(--cyan),0 0 26px var(--pink)}.brand p,.hint{color:#9eaccb;line-height:1.5}
+.panel{background:#10172aee;border:1px solid #263a62;border-radius:18px;padding:17px;margin:14px 0;box-shadow:0 10px 35px #0008}
+.status{display:flex;gap:9px;align-items:center;color:#c1cce3}.dot{width:10px;height:10px;border-radius:50%;background:#777}.dot.on{background:#00f59b;box-shadow:0 0 12px #00f59b}
+button{border:0;border-radius:12px;padding:13px 17px;font:inherit;font-weight:750;cursor:pointer;background:linear-gradient(100deg,var(--cyan),#70ffcb);color:#06101a}
+button.secondary{background:#263653;color:white}button.danger{background:linear-gradient(100deg,#ff477e,#ff9c61);color:#210711}
+button:disabled{opacity:.45;cursor:not-allowed}.buttons{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.buttons button{flex:1}
+.eq{height:95px;display:flex;align-items:end;justify-content:center;gap:5px;padding:10px;background:#080e1c;border-radius:14px;margin:12px 0}.bar{width:7%;max-width:22px;height:8%;border-radius:8px;background:linear-gradient(0deg,#00e5ff,#bd39ff,#ff4f9b);box-shadow:0 0 10px #00dfff88}
+.control{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:13px 0}.control input{grid-column:1/3;width:100%;accent-color:#00e5ff}.control label{color:#b9c8e8}.value{color:#72f5ff}
+audio{width:100%;margin-top:12px}
+@media(max-width:460px){body{padding:12px}.panel{padding:14px}}
+</style></head>
+<body><main class="wrap">
+<header class="brand"><h1>RAHUL PRO LIVE MIC</h1><p>REAL-TIME VOICE • LIVE EQUALIZER</p></header>
+<section class="panel">
+ <div class="status"><span class="dot" id="dot"></span><span id="status">सर्वर से कनेक्ट हो रहा है…</span></div>
+ <p class="hint">दोनों मोबाइल पर यह वेबसाइट खोलें। पहले दोनों माइक की अनुमति दें, फिर दोनों तरफ “LIVE CONNECT” दबाएँ। सिस्टम अपने आप दो उपलब्ध लोगों को जोड़ेगा—कोई Room ID नहीं।</p>
+ <div class="buttons"><button id="micBtn">माइक ON करें</button><button class="danger" id="stopBtn" disabled>माइक बंद करें</button></div>
+ <div class="buttons"><button id="connectBtn" disabled>LIVE CONNECT</button><button class="secondary" id="disconnectBtn">DISCONNECT</button></div>
+</section>
+<section class="panel"><h3>LIVE EQUALIZER</h3><div class="eq" id="eq"></div>
+ <div class="control"><label for="volume">Mic Volume</label><span class="value" id="volumeVal">100%</span><input id="volume" type="range" min="0" max="200" value="100"></div>
+ <div class="control"><label for="bass">Bass</label><span class="value" id="bassVal">0 dB</span><input id="bass" type="range" min="-12" max="12" value="0"></div>
+ <div class="control"><label for="treble">Treble</label><span class="value" id="trebleVal">0 dB</span><input id="treble" type="range" min="-12" max="12" value="0"></div>
+ <div class="control"><label for="echo">Echo</label><span class="value" id="echoVal">0%</span><input id="echo" type="range" min="0" max="65" value="0"></div>
+ <p class="hint">आवाज साफ रखने के लिए हेडफोन इस्तेमाल करें।</p>
+</section>
+<section class="panel"><h3>दूसरे व्यक्ति की LIVE आवाज</h3><div class="status"><span class="dot" id="remoteDot"></span><span id="remoteStatus">अभी कनेक्शन नहीं है</span></div><audio id="remoteAudio" autoplay playsinline controls></audio></section>
+<p class="hint" style="text-align:center">माइक चलाने के लिए HTTPS जरूरी है। इस वेबसाइट को इंटरनेट पर होस्ट करना होगा और साथ में matchmaking server भी चलना चाहिए।</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const bars=Array.from({length:18},()=>{let b=document.createElement('i');b.className='bar';$('eq').appendChild(b);return b});
+let ws,pc,localStream,processedStream,ctx,source,gain,bass,treble,delay,feedback,wet,dry,analyser,raf,queued=false,paired=false;
+const ice={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+function status(s,on=false){$('status').textContent=s;$('dot').classList.toggle('on',on)}
+function remoteStatus(s,on=false){$('remoteStatus').textContent=s;$('remoteDot').classList.toggle('on',on)}
+function wsUrl(){return (location.protocol==='https:'?'wss://':'ws://')+location.host}
+function connectServer(){
+ try{ws=new WebSocket(wsUrl())}catch(e){status('सर्वर से कनेक्शन नहीं हुआ');return}
+ ws.onopen=()=>{status('सर्वर तैयार है',true);$('connectBtn').disabled=false};
+ ws.onclose=()=>{status('सर्वर कनेक्शन बंद — पेज Reload करें');$('connectBtn').disabled=true};
+ ws.onerror=()=>status('सर्वर से कनेक्शन में समस्या');
+ ws.onmessage=async ev=>{
+  const m=JSON.parse(ev.data);
+  if(m.type==='waiting'){queued=true;status('दूसरे व्यक्ति का इंतज़ार…',true);remoteStatus('दूसरे मोबाइल का इंतज़ार…')}
+  if(m.type==='paired'){queued=false;paired=true;status('दूसरा मोबाइल मिल गया — कनेक्ट हो रहा है',true);remoteStatus('कनेक्शन बन रहा है…',true);makePeer(m.initiator)}
+  if(m.type==='signal'&&pc){try{if(m.data.sdp){await pc.setRemoteDescription(m.data);if(m.data.type==='offer'){let a=await pc.createAnswer();await pc.setLocalDescription(a);send({type:'signal',data:pc.localDescription})}}else if(m.data.candidate){await pc.addIceCandidate(m.data)}}catch(e){remoteStatus('कनेक्शन त्रुटि: '+e.message)}}
+  if(m.type==='peer-left'){cleanupPeer();status('दूसरा व्यक्ति डिस्कनेक्ट हो गया');remoteStatus('कॉल समाप्त')}
+  if(m.type==='full'){queued=false;status('अभी कोई दूसरा व्यक्ति उपलब्ध नहीं है');remoteStatus('थोड़ी देर बाद फिर Connect करें')}
+ };
+}
+function send(m){if(ws&&ws.readyState===1)ws.send(JSON.stringify(m))}
+function makePeer(initiator){
+ cleanupPeer();pc=new RTCPeerConnection(ice);
+ (processedStream||localStream).getTracks().forEach(t=>pc.addTrack(t,processedStream||localStream));
+ pc.ontrack=e=>{$('remoteAudio').srcObject=e.streams[0];$('remoteAudio').play().catch(()=>remoteStatus('कनेक्ट है — Play दबाएँ',true));remoteStatus('LIVE आवाज कनेक्ट है',true);status('LIVE कनेक्शन चालू है',true)};
+ pc.onicecandidate=e=>{if(e.candidate)send({type:'signal',data:e.candidate})};
+ pc.onconnectionstatechange=()=>{if(pc&&['failed','disconnected','closed'].includes(pc.connectionState)){remoteStatus('कनेक्शन टूट गया');status('कनेक्शन बंद')}} ;
+ if(initiator)pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>send({type:'signal',data:pc.localDescription})).catch(e=>remoteStatus('कॉल शुरू नहीं हुई: '+e.message));
+}
+async function startMic(){
+ try{
+  localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+  ctx=new (window.AudioContext||window.webkitAudioContext)();if(ctx.state==='suspended')await ctx.resume();
+  source=ctx.createMediaStreamSource(localStream);gain=ctx.createGain();bass=ctx.createBiquadFilter();bass.type='lowshelf';bass.frequency.value=180;
+  treble=ctx.createBiquadFilter();treble.type='highshelf';treble.frequency.value=3000;
+  delay=ctx.createDelay(1);delay.delayTime.value=.22;feedback=ctx.createGain();feedback.gain.value=0;wet=ctx.createGain();wet.gain.value=0;dry=ctx.createGain();dry.gain.value=1;analyser=ctx.createAnalyser();analyser.fftSize=64;
+  const dest=ctx.createMediaStreamDestination();source.connect(gain);gain.connect(bass);bass.connect(treble);treble.connect(dry);dry.connect(dest);treble.connect(delay);delay.connect(feedback);feedback.connect(delay);delay.connect(wet);wet.connect(dest);treble.connect(analyser);analyser.connect(ctx.destination);processedStream=dest.stream;
+  $('micBtn').disabled=true;$('stopBtn').disabled=false;status('माइक चालू है',true);animate();
+ }catch(e){status(e.name==='NotAllowedError'?'माइक की अनुमति Allow करें':'माइक चालू नहीं हुआ: '+e.message)}
+}
+function cleanupPeer(){if(pc){pc.ontrack=null;pc.close();pc=null}paired=false;$('remoteAudio').srcObject=null}
+function disconnect(){send({type:'leave'});queued=false;cleanupPeer();remoteStatus('आपने Disconnect किया');status('कनेक्शन बंद है')}
+function stopMic(){disconnect();if(localStream)localStream.getTracks().forEach(t=>t.stop());if(ctx)ctx.close();ctx=null;localStream=null;processedStream=null;cancelAnimationFrame(raf);$('micBtn').disabled=false;$('stopBtn').disabled=true;status('माइक बंद है');bars.forEach(b=>b.style.height='8%')}
+function animate(){let d=new Uint8Array(analyser.frequencyBinCount);const draw=()=>{if(!analyser)return;analyser.getByteFrequencyData(d);bars.forEach((b,i)=>b.style.height=(8+d[Math.min(i,d.length-1)]/255*92)+'%');raf=requestAnimationFrame(draw)};draw()}
+$('micBtn').onclick=startMic;$('stopBtn').onclick=stopMic;
+$('connectBtn').onclick=()=>{if(!localStream){alert('पहले माइक ON करें');return}if(!ws||ws.readyState!==1){alert('सर्वर कनेक्ट नहीं है');return}if(!queued&&!paired){send({type:'join'});status('दूसरे व्यक्ति को खोज रहे हैं…',true)}};
+$('disconnectBtn').onclick=disconnect;
+function slider(id,fn,unit){$(id).addEventListener('input',()=>{let v=+$(id).value;$ (id+'Val').textContent=v+unit;if(fn)fn(v)})}
+slider('volume',v=>{if(gain)gain.gain.value=v/100},'%');slider('bass',v=>{if(bass)bass.gain.value=v},' dB');slider('treble',v=>{if(treble)treble.gain.value=v},' dB');slider('echo',v=>{if(wet&&feedback){wet.gain.value=v/100;feedback.gain.value=Math.min(.55,v/120)}},'%');
+connectServer();
+</script></body></html>
